@@ -7,6 +7,11 @@ coordination server: relays only see MLS ciphertext.
 
 The silent-payment flow follows [Frostsnap PR #640](https://github.com/frostsnap/frostsnap/pull/640).
 
+The physical-device implementation is in [the local Frostsnap bridge handoff](frostsnap/README.md).
+It includes the Rust bridge, firmware updater, process adapter and hardware test
+results. Wiring its opaque payloads into Marmot is still required; `demo` continues
+to use software stand-ins.
+
 ## Run
 
 ```bash

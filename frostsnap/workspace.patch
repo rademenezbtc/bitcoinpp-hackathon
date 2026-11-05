@@ -1,0 +1,49 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index b9de8e0..1267c02 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2058,6 +2058,25 @@ dependencies = [
+  "tracing-subscriber",
+ ]
+ 
++[[package]]
++name = "frostsnap_sp_bridge"
++version = "0.1.0"
++dependencies = [
++ "anyhow",
++ "bincode",
++ "bitcoin",
++ "frostsnap_coordinator",
++ "frostsnap_core",
++ "frostsnap_factory",
++ "rand 0.8.5",
++ "rand_chacha 0.3.1",
++ "rsa",
++ "rusqlite",
++ "serde",
++ "serde_json",
++ "tempfile",
++]
++
+ [[package]]
+ name = "frostsnap_widgets"
+ version = "0.1.0"
+diff --git a/Cargo.toml b/Cargo.toml
+index b17e651..7e9cff7 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,6 +1,7 @@
+ [workspace]
+ 
+ members = [
++    "tools/sp_bridge",
+     "frostsnap_core",
+     "device",
+     "frostsnap_coordinator",
+diff --git a/frostsnap_factory/src/lib.rs b/frostsnap_factory/src/lib.rs
+new file mode 100644
+--- /dev/null
++++ b/frostsnap_factory/src/lib.rs
+@@ -0,0 +1,2 @@
++//! Shared firmware signing/verification used by local development tooling.
++pub mod secure_boot;

@@ -1,0 +1,28 @@
+{
+  "pr": "https://github.com/frostsnap/frostsnap/pull/640",
+  "pr_head": "538b0ec0832de92de98b1f58c556a0ea559ab9f4",
+  "ci_source_merge": "09a39ec18fb538bd89ea3808bbc3e8f20bbde2b8",
+  "ci_run": "https://github.com/frostsnap/frostsnap/actions/runs/40345567050",
+  "ci_artifact_id": 12661552519,
+  "artifact_zip_sha256": "4beddc7a9b5932a05088bec15c3d445db4fda68ce75069e947040fa824a88755",
+  "signer": "upstream public development secure-boot key",
+  "files": {
+    "frontier.bin": {
+      "sha256": "512ec13bf0c839d6d5c97f425d8db7f3caa2eb1f479cafac93dcdb01a484e2ef",
+      "bytes": 1605552
+    },
+    "dev-frontier.bin": {
+      "sha256": "a29fe659272334436f079a2faaee11b9cb308ac49e8639de843f85bd1090de03",
+      "bytes": 1609728
+    }
+  },
+  "hardware_validation": {
+    "date": "2026-11-05",
+    "signer_a_firmware": "Reboot digest verified against expected PR #640 image.",
+    "first_ecdh": "Single-receiver ECDH contribution and proof verified; user reported blue-screen panic after approval.",
+    "panic": "device/src/esp32_run.rs:440: upstream read fail: UnexpectedVariant, ReceiveSerial, allowed 0..12, found 33.",
+    "staged_retry": "Fresh ECDH session verified; user confirmed normal screen after ECDH, after cancellation with USB open, and after USB close.",
+    "assessment": "Intermittent serial-decoding crash not reproduced or fixed. No transaction signed or broadcast. ECDH fixture used an imaginary input and public test recipient.",
+    "signer_b": "Not yet upgraded or physically tested."
+  }
+}
