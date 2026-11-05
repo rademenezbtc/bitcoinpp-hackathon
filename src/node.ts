@@ -157,7 +157,17 @@ export class VaultNode extends EventEmitter<{ message: [Inbound]; rumor: [Inboun
                 this.log(`ignored invite from unknown ${welcomeRumor.pubkey.slice(0, 8)}…`);
                 continue;
               }
-              const { group } = await this.client.joinGroupFromWelcome({ welcomeRumor });
+              let group: any;
+              try {
+                ({ group } = await this.client.joinGroupFromWelcome({ welcomeRumor }));
+              } catch (e: any) {
+                // Relays replay old invites; ones sealed to a key package from an earlier run can't be opened.
+                if (/no matching|matching key package/i.test(e?.message ?? "")) {
+                  if (!this.groupId) this.log("ignored an old invite (made for a previous run) — waiting for a fresh one");
+                  continue;
+                }
+                throw e;
+              }
               this.groupId = bytesToHex(group.id);
               this.watchGroup(group);
               this.emit("joined", this.groupId);

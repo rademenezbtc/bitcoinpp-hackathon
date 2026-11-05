@@ -158,7 +158,7 @@ async function run() {
   ].filter(Boolean);
   if (problems.length) die(`config incomplete: ${problems.join(", ")}\n  ${cfgPath}`);
 
-  const log = (s: string) => console.log(`${new Date().toISOString().slice(11, 19)} ${s}`);
+  const log = (s: string) => console.log(`${new Date().toTimeString().slice(0, 8)} ${s}`);
   // Everything crossing the wire goes to the dashboard's "what the relays see" panel.
   const early: WireEvent[] = [];
   let wireSink = (w: WireEvent) => { early.push(w); };
