@@ -17,6 +17,8 @@ import { VaultNode } from "./node.ts";
 import { VaultApp, type AppConfig } from "./vault-app.ts";
 import { relayNetwork } from "./net-pool.ts";
 import { FileBytesStore } from "./file-store.ts";
+import { tapNetwork, type WireEvent } from "./tap.ts";
+import { startDashboard } from "./dashboard/server.ts";
 
 const DEFAULT_RELAYS = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"];
 const DEFAULT_FIRMWARE = "512ec13bf0c839d6d5c97f425d8db7f3caa2eb1f479cafac93dcdb01a484e2ef";
@@ -157,7 +159,13 @@ async function run() {
   if (problems.length) die(`config incomplete: ${problems.join(", ")}\n  ${cfgPath}`);
 
   const log = (s: string) => console.log(`${new Date().toISOString().slice(11, 19)} ${s}`);
-  const network = relayNetwork(cfg.relays, new PrivateKeySigner(id.sk), log); // NIP-42 auth with the same identity
+  // Everything crossing the wire goes to the dashboard's "what the relays see" panel.
+  const early: WireEvent[] = [];
+  let wireSink = (w: WireEvent) => { early.push(w); };
+  const network = tapNetwork(
+    relayNetwork(cfg.relays, new PrivateKeySigner(id.sk), log), // NIP-42 auth with the same identity
+    (w) => wireSink(w),
+  );
   const node = new VaultNode(cfg.name, network, cfg.relays, {
     secretKey: id.sk, clientId: id.clientId,
     groupStateStore: new FileBytesStore(join(home, "groups")),
@@ -166,6 +174,23 @@ async function run() {
 
   const bridge = new FrostsnapBridge(expand(cfg.bridge.binary), bridgeArgs(cfg.bridge, false));
   const app = new VaultApp(cfg, node, bridge, log);
+  if (!argv.includes("--no-dashboard")) {
+    const dash = startDashboard(app, {
+      port: Number(flag("port", "8787")),
+      actions: {
+        propose: cfg.role === "coordinator" ? async (file) => app.propose(await loadProposal(file)) : undefined,
+        broadcast: async (hex) => {
+          const r = await fetch("https://mempool.space/signet/api/tx", { method: "POST", body: hex });
+          const text = (await r.text()).trim();
+          if (!r.ok) throw new Error(`mempool.space refused: ${text}`);
+          return text;
+        },
+      },
+    });
+    early.forEach(dash.onWire);
+    wireSink = dash.onWire;
+    log(`dashboard: ${dash.url}`);
+  }
   await node.start();
   log(`marmot identity ${id.npub} (${cfg.role}, share ${cfg.shareIndex}) on ${cfg.relays.join(", ")}`);
   node.on("joined", (g) => log(`✓ joined vault group ${g.slice(0, 12)}…`));
@@ -179,9 +204,19 @@ async function run() {
   if (cfg.role === "coordinator" && !node.groupId) {
     await node.createGroup(`Marmot Vault ${cfg.pin.keyId.slice(0, 8)}`);
     log(`created vault group ${node.groupId!.slice(0, 12)}…`);
-    await inviteAll(node, cfg, id.pubkey, log);
+    // Invite everyone; keep retrying anyone whose key package isn't on the relays yet.
+    let pending = await inviteAll(node, cfg, id.pubkey, log);
+    const t = setInterval(async () => {
+      if (!pending.length) return clearInterval(t);
+      pending = await inviteAll(node, cfg, id.pubkey, log, pending);
+    }, 15_000);
   } else if (!node.groupId) {
     log(`waiting for an invite from coordinator ${nip19.npubEncode(cfg.coordinator)}`);
+    // Make sure our key package is on the relays (they may have been down at startup).
+    const t = setInterval(async () => {
+      if (node.groupId) return clearInterval(t);
+      if (await node.publishKeyPackage()) log("key package is on the relays — waiting for the invite");
+    }, 30_000);
   }
 
   const help = cfg.role === "coordinator"
@@ -195,7 +230,7 @@ async function run() {
       if (!c) return;
       if (c === "status") console.log(JSON.stringify(app.status(), null, 2));
       else if (c === "invite" && cfg.role === "coordinator") rest[0] ? await node.invite(toHex(rest[0])) : await inviteAll(node, cfg, id.pubkey, log);
-      else if (c === "propose" && cfg.role === "coordinator") await app.propose(await loadProposal(rest[0] ?? die("propose <file.json>")));
+      else if (c === "propose" && cfg.role === "coordinator") await app.propose(await loadProposal(rest[0] ?? "proposal.json"));
       else if (c === "sign" && cfg.role === "coordinator") await app.requestSignatures();
       else if (c === "retry") { if (app.signer?.sharesSent === false && app.signer.signing) await app.fetchShares(); else if (app.signer && !app.signer.myOffer) await app.requestEcdh(); }
       else if (c === "cancel") await app.cancel();
@@ -208,25 +243,32 @@ async function run() {
   rl.on("close", () => { bridge.close(); process.exit(0); });
 }
 
-async function inviteAll(node: VaultNode, cfg: FileConfig, self: string, log: (s: string) => void) {
-  for (const pk of Object.keys(cfg.members).filter((p) => p !== self)) {
+/** Invite members; returns the pubkeys that still need an invite (retried automatically). */
+async function inviteAll(node: VaultNode, cfg: FileConfig, self: string, log: (s: string) => void, only?: string[]) {
+  const failed: string[] = [];
+  for (const pk of only ?? Object.keys(cfg.members).filter((p) => p !== self)) {
     try {
       await node.invite(pk);
       log(`✓ invited share ${cfg.members[pk]} (${nip19.npubEncode(pk).slice(0, 16)}…)`);
     } catch (e: any) {
-      log(`✗ invite share ${cfg.members[pk]}: ${e.message} — type \`invite\` to retry`);
+      failed.push(pk);
+      log(`✗ invite share ${cfg.members[pk]}: ${e.message} — retrying in 15 s`);
     }
   }
+  return failed;
 }
 
 /** proposal.json: { inputs:[{txid, vout, internal, index} | {transaction, vout, …}], recipients:[{address, amount_sat}], change?:{index, amount_sat} } */
 async function loadProposal(file: string) {
-  const p = JSON.parse(readFileSync(expand(file), "utf8"));
+  const path = expand(file);
+  if (!existsSync(path)) throw new Error(`no proposal file at ${path}`);
+  const p = JSON.parse(readFileSync(path, "utf8"));
+  if (!Array.isArray(p.inputs) || !Array.isArray(p.recipients)) throw new Error("proposal needs inputs[] and recipients[]");
   for (const i of p.inputs) {
     if (!i.transaction) {
-      if (!i.txid) die("each input needs txid or transaction");
+      if (!i.txid) throw new Error("each input needs txid or transaction");
       const r = await fetch(`https://mempool.space/signet/api/tx/${i.txid}/hex`);
-      if (!r.ok) die(`could not fetch ${i.txid} from mempool.space/signet (${r.status})`);
+      if (!r.ok) throw new Error(`could not fetch ${i.txid} from mempool.space/signet (${r.status})`);
       i.transaction = (await r.text()).trim();
     }
     i.internal ??= false;

@@ -51,6 +51,9 @@ interface SignerSession {
   subset?: number[];
   derived: Map<number, string>; // share index → completed_task hash
   sharesSent?: boolean;
+  sharesSeen: Set<number>; // whose signature shares went out (any member)
+  complete?: { txid: string; txHex: string };
+  cancelled?: string;
   done?: boolean;
 }
 
@@ -60,6 +63,7 @@ interface CoordSession {
   subset?: number[];
   shares: Map<number, unknown>;
   completed?: boolean;
+  complete?: { txid: string; txHex: string };
   timer?: ReturnType<typeof setTimeout>;
 }
 
@@ -71,16 +75,35 @@ export class VaultApp {
   signer?: SignerSession;
   coord?: CoordSession;
   private waiters: { event: string; sessionId: string; resolve: (n: any) => void }[] = [];
+  private listeners = new Set<() => void>();
+  /** Recent log lines, for the dashboard. */
+  logLines: { at: number; text: string }[] = [];
+  log: (s: string) => void;
 
   constructor(
     public cfg: AppConfig,
     public node: VaultNode,
     public bridge: BridgeLike,
-    public log: (s: string) => void = console.log,
+    log: (s: string) => void = console.log,
   ) {
+    this.log = (text: string) => {
+      log(text);
+      this.logLines.push({ at: Date.now(), text });
+      if (this.logLines.length > 300) this.logLines.shift();
+      this.changed();
+    };
     bridge.on("notification", (n) => this.onNotification(n));
     bridge.on("diagnostic", (d) => this.log(`bridge: ${String(d).trim()}`));
     node.on("rumor", (r) => this.onRumor(r).catch((e) => this.log(`✗ ${e?.message ?? e}`)));
+  }
+
+  /** Subscribe to state changes (dashboard). Returns an unsubscribe function. */
+  onChange(fn: () => void) {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+  private changed() {
+    for (const fn of this.listeners) try { fn(); } catch {}
   }
 
   get isCoordinator() {
@@ -156,7 +179,7 @@ export class VaultApp {
       case "fs.offer":
         if (memberIdx === undefined || memberIdx !== m.shareIndex)
           return this.log(`✗ offer for share ${m.shareIndex} from ${short(r.from)} (bound to ${memberIdx ?? "nobody"}) ignored`);
-        if (this.signer?.id === m.sessionId && !this.signer.offersSeen.has(m.shareIndex)) this.signer.offersSeen.set(m.shareIndex, m.offer);
+        if (this.signer?.id === m.sessionId && !this.signer.offersSeen.has(m.shareIndex)) { this.signer.offersSeen.set(m.shareIndex, m.offer); this.changed(); }
         if (this.isCoordinator) await this.coordOnOffer(m);
         return;
       case "fs.sign_request":
@@ -164,11 +187,12 @@ export class VaultApp {
         return this.reportFailure(m.sessionId, () => this.signerOnSignRequest(m));
       case "fs.derived":
         if (memberIdx === undefined || memberIdx !== m.shareIndex) return;
-        if (this.signer?.id === m.sessionId && !this.signer.derived.has(m.shareIndex)) this.signer.derived.set(m.shareIndex, m.completedTaskHash);
+        if (this.signer?.id === m.sessionId && !this.signer.derived.has(m.shareIndex)) { this.signer.derived.set(m.shareIndex, m.completedTaskHash); this.changed(); }
         if (this.isCoordinator && this.coord?.id === m.sessionId) this.log(`share ${m.shareIndex} derived completed task ${m.completedTaskHash.slice(0, 12)}…`);
         return;
       case "fs.shares":
         if (memberIdx === undefined || memberIdx !== m.shareIndex) return this.log(`✗ shares from unbound sender ignored`);
+        if (this.signer?.id === m.sessionId) { this.signer.sharesSeen.add(m.shareIndex); this.changed(); }
         if (this.isCoordinator) await this.coordOnShares(m);
         return;
       case "fs.cancel":
@@ -176,7 +200,7 @@ export class VaultApp {
         return this.onCancel(m.sessionId, `${m.reason} (by ${fromCoord ? "coordinator" : `share ${memberIdx}`})`, false);
       case "fs.complete":
         if (!fromCoord) return;
-        if (this.signer?.id === m.sessionId) this.signer.done = true;
+        if (this.signer?.id === m.sessionId) { this.signer.done = true; this.signer.complete = { txid: m.txid, txHex: m.txHex }; }
         return this.log(`✓ session ${short(m.sessionId)} complete: txid ${m.txid}`);
       case "fs.status":
         return this.log(`share ${m.shareIndex}: ${m.note}`);
@@ -219,7 +243,7 @@ export class VaultApp {
     if (!this.cfg.deviceId || !this.deviceReady) throw new Error("device not connected with the expected SP firmware — plug it in, then ask the coordinator to propose again");
 
     this.seen.add(p.sessionId);
-    this.signer = { id: p.sessionId, proposal: p, offersSeen: new Map(), derived: new Map() };
+    this.signer = { id: p.sessionId, proposal: p, offersSeen: new Map(), derived: new Map(), sharesSeen: new Set() };
     this.log(`→ proposal ${short(p.sessionId)}: ${p.summary.recipients.map((r) => `${r.amount_sat} sat → ${r.address.slice(0, 14)}…${r.address.slice(-6)}`).join(", ")}${p.feeSat !== undefined ? `, fee ${p.feeSat} sat` : ""}`);
     this.log("  APPROVE THE ECDH REQUEST ON THE DEVICE (check recipient and amount on its screen)");
     await this.requestEcdh();
@@ -372,6 +396,7 @@ export class VaultApp {
     const txid = res?.txid;
     if (typeof txHex !== "string" || typeof txid !== "string") throw new Error(`unexpected combine result ${JSON.stringify(res)}`);
     c.completed = true;
+    c.complete = { txid, txHex };
     clearTimeout(c.timer);
     this.log(`✓ signed transaction ${txid}`);
     this.log(`  NOT broadcast. To broadcast on Signet: paste the hex at https://mempool.space/signet/tx/push`);
@@ -396,6 +421,7 @@ export class VaultApp {
     if (this.signer?.id === id && !this.signer.done) {
       touched = true;
       this.signer.done = true;
+      this.signer.cancelled = reason;
       try { await this.bridge.request({ method: "cancel", session_id: id }, 15_000); } catch (e: any) { this.log(`bridge cancel: ${e.message}`); }
     }
     if (this.coord?.id === id && !this.coord.completed) {
@@ -404,6 +430,51 @@ export class VaultApp {
       clearTimeout(this.coord.timer);
     }
     if (touched) this.log(`✗ session ${short(id)} cancelled: ${reason}`);
+  }
+
+  /** Everything the dashboard shows, from this Mac's point of view. */
+  snapshot() {
+    const s = this.signer, c = this.coord, t = this.cfg.threshold;
+    const members = Object.entries(this.cfg.members)
+      .map(([pubkey, shareIndex]) => ({ pubkey, shareIndex, me: pubkey === this.node.pubkey, coordinator: pubkey === this.cfg.coordinator }))
+      .sort((a, b) => a.shareIndex - b.shareIndex);
+    let session: any = null;
+    if (s) {
+      const offers = new Set([...s.offersSeen.keys(), ...(c?.id === s.id ? c.offers.keys() : [])]);
+      const subset = s.subset ?? (c?.id === s.id ? c.subset : undefined);
+      const signedSet = new Set([...s.sharesSeen, ...(s.sharesSent ? [this.cfg.shareIndex] : [])]);
+      const complete = s.complete ?? (c?.id === s.id ? c.complete : undefined);
+      const live = !s.cancelled && !complete;
+      const per: Record<number, any> = {};
+      for (const m of members) {
+        const i = m.shareIndex;
+        per[i] = {
+          ecdh: offers.has(i) ? "done" : live ? "approve" : "idle",
+          derived: s.derived.get(i) ?? null,
+          sign: signedSet.has(i) ? "done" : live && subset?.includes(i) ? "approve" : "idle",
+        };
+      }
+      const hashes = subset ? subset.map((i) => s.derived.get(i)) : [];
+      const derivedMatch = hashes.length && hashes.every(Boolean) ? new Set(hashes).size === 1 : null;
+      const stage = s.cancelled ? "cancelled" : complete ? "complete"
+        : subset && signedSet.size >= subset.length ? "combining"
+        : subset ? (derivedMatch ? "signing" : "deriving")
+        : offers.size >= t ? "gate" : "ecdh";
+      session = {
+        id: s.id, recipients: s.proposal.summary.recipients, change: s.proposal.summary.change ?? null,
+        inputs: s.proposal.summary.inputs, feeSat: s.proposal.feeSat ?? null,
+        stage, per, subset: subset ?? null, derivedMatch, complete: complete ?? null, cancelled: s.cancelled ?? null,
+        offers: offers.size, signed: signedSet.size,
+      };
+    }
+    return {
+      me: { name: this.cfg.name, pubkey: this.node.pubkey, shareIndex: this.cfg.shareIndex, role: this.cfg.role },
+      isCoordinator: this.isCoordinator, threshold: t, members, relays: this.cfg.relays,
+      group: this.node.groupId ?? null, deviceReady: this.deviceReady, deviceId: this.cfg.deviceId ?? null,
+      bridgeRevision: this.bridgeRevision ?? null, gateBeforeSign: !!this.cfg.gateBeforeSign,
+      canPropose: this.isCoordinator && (!c || !!c.completed), canSign: this.isCoordinator && !!c && !c.completed && !c.subset && c.offers.size >= t,
+      session,
+    };
   }
 
   status() {

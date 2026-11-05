@@ -1,11 +1,13 @@
 // marmot-ts NostrNetworkInterface over real relays (applesauce-relay RelayPool).
 import { RelayPool } from "applesauce-relay";
-import { lastValueFrom, toArray, timeout, catchError, of } from "rxjs";
+import { lastValueFrom, toArray, timeout, catchError, of, retry, timer, config as rxConfig } from "rxjs";
 import type { NostrEvent } from "applesauce-core/helpers/event";
 import type { Filter } from "applesauce-core/helpers/filter";
 import type { NostrNetworkInterface, PublishResponse, Subscribable } from "@internet-privacy/marmot-ts/client";
 
 export function relayNetwork(relays: string[], signer: any, log = console.log): NostrNetworkInterface {
+  // A relay outage must never crash the app (e.g. venue Wi-Fi drops): log instead of throwing.
+  rxConfig.onUnhandledError = (e: any) => log(`relay error: ${e?.message ?? e}`);
   // NIP-42: some relays only serve gift wraps (1059) to authenticated users.
   const onAuthRequired = async ({ relay }: any) => {
     await relay.authenticate(signer);
@@ -44,7 +46,10 @@ export function relayNetwork(relays: string[], signer: any, log = console.log): 
       ) as Promise<NostrEvent[]>;
     },
     subscription(rs: string[], filters: Filter | Filter[]): Subscribable<NostrEvent> {
-      return pool.subscription(use(rs), arr(filters) as any, { onAuthRequired } as any) as any;
+      // Keep subscriptions alive across outages: resubscribe every 5 s until relays are back.
+      return pool.subscription(use(rs), arr(filters) as any, { onAuthRequired } as any).pipe(
+        retry({ delay: (e: any) => { log(`relays unreachable (${e?.message ?? e}) — retrying in 5 s`); return timer(5000); } }),
+      ) as any;
     },
     async getUserInboxRelays() {
       return relays;

@@ -82,9 +82,21 @@ export class VaultNode extends EventEmitter<{ message: [Inbound]; rumor: [Inboun
       this.watchGroup(g);
       this.log(`resumed group ${this.groupId.slice(0, 12)}…`);
     }
-    await this.client.keyPackages.create({ relays: this.relays });
+    await this.publishKeyPackage();
     this.listenForInvites();
     return this;
+  }
+
+  /** (Re)publish our key package so the coordinator can invite us. Returns false if no relay took it. */
+  async publishKeyPackage() {
+    try {
+      await this.client.keyPackages.create({ relays: this.relays });
+      const mine = await this.client.network.request(this.relays, [{ kinds: [30443], authors: [this.pubkey], limit: 1 }]);
+      return mine.length > 0;
+    } catch (e: any) {
+      this.log(`key package publish failed: ${e?.message ?? e}`);
+      return false;
+    }
   }
 
   /** Coordinator: create the vault group. */

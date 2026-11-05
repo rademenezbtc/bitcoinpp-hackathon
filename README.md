@@ -70,6 +70,25 @@ bun run vault run --name B      # waits for A's invite (accepts only A)
 bun run vault run --name A      # creates the group and invites B
 ```
 
+### Live dashboard
+
+`vault run` serves a dashboard at **http://127.0.0.1:8787** (`--port N` to change,
+`--no-dashboard` to disable; it listens on localhost only). It shows the payment,
+the ceremony steps, both devices' progress, the "both devices derived the identical
+transaction" check, the signed txid with **Broadcast to Signet** / mempool.space,
+and a live **"What the relays see"** feed of every Nostr event this Mac sent or
+received, with a counter that flags any plaintext (recipient address, ceremony JSON,
+wallet ids) found in it. On the coordinator it also has Propose / Request signatures /
+Cancel buttons. No external fonts or scripts, so it works on venue Wi-Fi.
+
+Rehearse it without hardware (`MOCK_APPROVE_MS` simulates the time to press the device):
+```bash
+bun run relay 7777
+MOCK_DEVICE=devB MOCK_SHARE=2 MOCK_APPROVE_MS=6000 bun run vault run --name B --port 8788
+MOCK_DEVICE=devA MOCK_APPROVE_MS=2500 bun run vault run --name A
+```
+(with mock-bridge configs from `vault init --bridge scripts/mock-bridge.sh … --home /tmp/rehearsal`).
+
 ### 5. Milestone 1 (on A)
 
 ```bash
@@ -167,6 +186,8 @@ count up together.
 | `src/frostsnap-bridge.ts` | Re-export of `frostsnap/sp_bridge/client.ts` (local bridge process adapter) |
 | `src/net-pool.ts` | marmot-ts network over real relays (applesauce-relay, NIP-42 auth) |
 | `src/file-store.ts` | On-disk MLS group state so restarts resume the group |
+| `src/dashboard/` | Live ceremony dashboard (`server.ts` SSE + self-contained `index.html`) |
+| `src/tap.ts` | Records every event crossing the wire, for the relay view |
 | `scripts/` | `local-relay.ts` (LAN relay), `mock-bridge.ts`/`.sh` (hardware stand-in) |
 | `src/schema.ts` | Reference ceremony messages (TypeScript SP math path, not used with hardware) |
 | `src/sp.ts` | BIP374 DLEQ, BIP352 input hash / outputs / addresses, share images, Lagrange |

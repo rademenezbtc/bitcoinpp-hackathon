@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Marmot Vault</title>
+<style>
+:root {
+  --bg: #0a0b0d;
+  --panel: #121418;
+  --panel-2: #171a1f;
+  --line: #23272e;
+  --line-2: #2e333b;
+  --text: #ecebe6;
+  --muted: #959aa3;
+  --faint: #5b616b;
+  --accent: #f7931a;
+  --accent-soft: rgba(247,147,26,.14);
+  --ok: #43d692;
+  --ok-soft: rgba(67,214,146,.13);
+  --wait: #f2b84b;
+  --wait-soft: rgba(242,184,75,.14);
+  --cipher: #63cfc6;
+  --bad: #ff6b6b;
+  --bad-soft: rgba(255,107,107,.14);
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, sans-serif;
+  --r: 14px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); }
+body { height: 100vh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; font-size: 15px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+.mono { font-family: var(--mono); }
+button { font: inherit; }
+
+/* ---------- header ---------- */
+body > header { display: flex; align-items: center; gap: 18px; padding: 14px 28px; border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand svg { width: 30px; height: 30px; }
+.brand h1 { font-size: 19px; font-weight: 650; letter-spacing: -.01em; margin: 0; }
+.brand p { margin: 0; color: var(--muted); font-size: 13px; }
+.chips { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.chip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; border: 1px solid var(--line-2); border-radius: 999px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.chip b { color: var(--text); font-weight: 560; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.dot.ok { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+.dot.bad { background: var(--bad); }
+.dot.live { background: var(--cipher); animation: blink 2s infinite; }
+
+/* ---------- layout ---------- */
+main { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(340px, 1fr); gap: 20px; padding: 18px 28px 14px; min-height: 0; }
+.col { display: flex; flex-direction: column; gap: 14px; min-width: 0; min-height: 0; overflow-y: auto; scrollbar-width: none; }
+.col::-webkit-scrollbar { display: none; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
+.card h2 { margin: 0; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); }
+
+/* ---------- payment ---------- */
+.payment { padding: 18px 24px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 24px; }
+.amount { font-size: 38px; font-weight: 680; letter-spacing: -.025em; line-height: 1; white-space: nowrap; }
+.amount small { font-size: 16px; color: var(--muted); font-weight: 500; margin-left: 6px; letter-spacing: 0; }
+.to { min-width: 0; }
+.to .label { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.addr { font-family: var(--mono); font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.addr .sp { color: var(--accent); }
+.meta { text-align: right; font-size: 12.5px; color: var(--muted); line-height: 1.7; white-space: nowrap; }
+.meta b { color: var(--text); font-weight: 560; }
+.idle { padding: 30px 24px; color: var(--muted); display: flex; align-items: center; gap: 14px; font-size: 16px; }
+
+/* ---------- stage rail ---------- */
+.rail { padding: 16px 24px 16px; }
+.steps { display: grid; grid-template-columns: repeat(5, 1fr); margin-top: 14px; position: relative; }
+.step { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; padding: 0 6px; }
+.step::before { content: ""; position: absolute; top: 15px; left: -50%; right: 50%; height: 2px; background: var(--line-2); z-index: 0; }
+.step:first-child::before { display: none; }
+.step.done::before, .step.active::before { background: var(--ok); }
+.node { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--panel-2); border: 2px solid var(--line-2); z-index: 1; color: var(--faint); font-size: 13px; font-weight: 650; }
+.step.done .node { background: var(--ok); border-color: var(--ok); color: #06210f; }
+.step.active .node { border-color: var(--wait); color: var(--wait); background: var(--wait-soft); animation: pulse 1.6s infinite; }
+.step.bad .node { border-color: var(--bad); color: var(--bad); background: var(--bad-soft); }
+.step .t { font-size: 13.5px; font-weight: 560; color: var(--muted); }
+.step.done .t, .step.active .t { color: var(--text); }
+.step .s { font-size: 11.5px; color: var(--faint); margin-top: -6px; }
+
+/* ---------- devices ---------- */
+.devices { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.device { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.device header { all: unset; display: flex; align-items: center; gap: 12px; }
+.device .ico { width: 38px; height: 38px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line-2); display: grid; place-items: center; }
+.device .ico svg { width: 20px; height: 20px; color: var(--muted); }
+.device .name { font-weight: 640; font-size: 16px; }
+.device .sub { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+.tag { margin-left: auto; font-size: 11px; padding: 3px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-weight: 600; letter-spacing: .02em; }
+.rows { display: flex; flex-direction: column; gap: 8px; }
+.row { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px; background: var(--panel-2); border: 1px solid transparent; transition: border-color .3s, background .3s; }
+.row .st { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; border: 1.5px solid var(--line-2); }
+.row .st svg { width: 13px; height: 13px; }
+.row .lab { font-size: 14px; color: var(--muted); min-width: 0; }
+.row .lab small { display: block; font-size: 11.5px; color: var(--faint); }
+.row .val { font-family: var(--mono); font-size: 12px; color: var(--faint); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+.row.done .st { background: var(--ok); border-color: var(--ok); color: #06210f; }
+.row.done .lab { color: var(--text); }
+.row.done .val { color: var(--ok); }
+.row.approve { border-color: rgba(242,184,75,.45); background: var(--wait-soft); }
+.row.approve .st { border-color: var(--wait); animation: pulse 1.6s infinite; }
+.row.approve .lab { color: var(--text); }
+.row.approve .val { color: var(--wait); font-family: var(--sans); font-weight: 600; font-size: 12.5px; }
+
+.banner { padding: 12px 18px; border-radius: 12px; display: flex; align-items: center; gap: 12px; font-size: 14.5px; }
+.banner.ok { background: var(--ok-soft); border: 1px solid rgba(67,214,146,.35); }
+.banner.bad { background: var(--bad-soft); border: 1px solid rgba(255,107,107,.4); }
+.banner.wait { background: var(--wait-soft); border: 1px solid rgba(242,184,75,.4); }
+.banner .mono { color: var(--muted); font-size: 12.5px; margin-left: auto; white-space: nowrap; }
+
+/* ---------- tx ---------- */
+.tx { padding: 16px 22px; display: flex; align-items: center; gap: 18px; border-color: rgba(67,214,146,.4); flex-wrap: wrap; }
+.tx > div:first-child { flex: 1 1 260px; min-width: 0; }
+.tx .k { font-size: 12px; color: var(--muted); }
+.tx .v { font-family: var(--mono); font-size: 14px; word-break: break-all; }
+.btns { margin-left: auto; display: flex; gap: 10px; flex-wrap: wrap; }
+.btn { appearance: none; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text); padding: 9px 15px; border-radius: 10px; cursor: pointer; font-size: 13.5px; font-weight: 560; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; }
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #1b0f00; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn:disabled { opacity: .4; cursor: default; }
+
+/* ---------- controls ---------- */
+.controls { padding: 14px 16px; display: flex; gap: 10px; align-items: center; }
+.controls input { flex: 1; min-width: 0; background: var(--panel-2); border: 1px solid var(--line-2); color: var(--text); border-radius: 10px; padding: 9px 12px; font-family: var(--mono); font-size: 13px; }
+.controls .err { color: var(--bad); font-size: 12.5px; }
+
+/* ---------- relay view ---------- */
+.relay { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.relay .head { padding: 18px 22px 14px; border-bottom: 1px solid var(--line); }
+.relay .head p { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 16px; }
+.stat { background: var(--panel-2); border-radius: 10px; padding: 10px 12px; }
+.stat .n { font-size: 24px; font-weight: 680; letter-spacing: -.02em; }
+.stat .l { font-size: 11.5px; color: var(--muted); }
+.stat.good .n { color: var(--ok); }
+.stat.leak .n { color: var(--bad); }
+.feed { flex: 1; overflow: hidden; padding: 6px 0; position: relative; min-height: 0; }
+.feed::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 80px; background: linear-gradient(transparent, var(--panel)); pointer-events: none; }
+.ev { padding: 10px 22px; border-bottom: 1px solid var(--line); animation: drop .45s ease-out; }
+.ev .top { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.ev .dir { font-family: var(--mono); color: var(--faint); width: 14px; }
+.ev .kind { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; padding: 2px 7px; border-radius: 6px; text-transform: uppercase; }
+.k445 { background: rgba(99,207,198,.13); color: var(--cipher); }
+.k1059 { background: rgba(170,140,255,.14); color: #b9a6ff; }
+.k30443 { background: rgba(149,154,163,.14); color: var(--muted); }
+.ev .who { font-family: var(--mono); }
+.ev .sz { margin-left: auto; font-family: var(--mono); }
+.ev .blob { margin-top: 6px; font-family: var(--mono); font-size: 11.5px; color: rgba(99,207,198,.55); word-break: break-all; line-height: 1.35; max-height: 2.7em; overflow: hidden; }
+.ev.leak { background: var(--bad-soft); }
+.ev.leak .blob { color: var(--bad); }
+
+/* ---------- log ---------- */
+footer { border-top: 1px solid var(--line); padding: 9px 28px; font-family: var(--mono); font-size: 12px; color: var(--faint); display: flex; gap: 14px; cursor: pointer; }
+footer .last { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+#log { display: none; max-height: 34vh; overflow: auto; border-top: 1px solid var(--line); padding: 10px 28px; font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: pre-wrap; }
+body.showlog #log { display: block; }
+
+@keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(242,184,75,.45); } 50% { box-shadow: 0 0 0 7px rgba(242,184,75,0); } }
+@keyframes blink { 50% { opacity: .35; } }
+@keyframes drop { from { opacity: 0; transform: translateY(-8px); background: rgba(99,207,198,.12); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+@media (max-width: 1100px) {
+  body { height: auto; min-height: 100vh; display: flex; flex-direction: column; }
+  main { grid-template-columns: 1fr; }
+  .col { overflow: visible; }
+  .relay { height: 520px; }
+}
+@media (max-width: 700px) {
+  header, main, footer { padding-left: 16px; padding-right: 16px; }
+  .devices { grid-template-columns: 1fr; }
+  .payment { grid-template-columns: 1fr; gap: 12px; }
+  .amount { font-size: 34px; }
+  .step .t { font-size: 11.5px; }
+  .controls { flex-wrap: wrap; }
+  .controls input { flex-basis: 100%; }
+  .btns { margin-left: 0; }
+  .meta { text-align: left; }
+  .steps { grid-template-columns: repeat(5, minmax(0,1fr)); }
+  .step .s { display: none; }
+  .chips { display: none; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><rect x="1" y="1" width="30" height="30" rx="9" fill="#f7931a"/><path d="M10 21V12.5a2.5 2.5 0 0 1 5 0V21m0-8.5a2.5 2.5 0 0 1 5 0V21" stroke="#1b0f00" stroke-width="2.4" stroke-linecap="round"/><circle cx="23.5" cy="21" r="1.6" fill="#1b0f00"/></svg>
+    <div><h1>Marmot Vault</h1><p>FROST 2-of-2 · silent payments · coordinated over Marmot</p></div>
+  </div>
+  <div class="chips" id="chips"></div>
+</header>
+
+<main>
+  <div class="col">
+    <div class="card" id="payment"></div>
+    <div class="card rail"><h2>Signing ceremony</h2><div class="steps" id="steps"></div></div>
+    <div class="devices" id="devices"></div>
+    <div id="banner"></div>
+    <div id="tx"></div>
+    <div class="card controls" id="controls" hidden></div>
+  </div>
+  <div class="card relay">
+    <div class="head">
+      <h2>What the relays see</h2>
+      <p>Every Nostr event this Mac sent or received, as stored on the relays.</p>
+      <div class="stats">
+        <div class="stat"><div class="n" id="nEv">0</div><div class="l">events</div></div>
+        <div class="stat"><div class="n" id="nKb">0</div><div class="l">kilobytes</div></div>
+        <div class="stat good" id="leakBox"><div class="n" id="nLeak">0</div><div class="l">plaintext leaks</div></div>
+      </div>
+    </div>
+    <div class="feed" id="feed"></div>
+  </div>
+</main>
+<div id="log"></div>
+<footer id="foot" title="click to show the log"><span>log</span><span class="last" id="last">—</span></footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const short = (h, a = 6, b = 4) => (!h ? "" : h.length <= a + b + 1 ? h : `${h.slice(0, a)}…${b ? h.slice(-b) : ""}`);
+const sat = (n) => Number(n).toLocaleString("en-US");
+const ICON = {
+  check: '<svg viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  chip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="3" width="12" height="18" rx="3"/><path d="M10 17h4"/></svg>',
+  wait: '<svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.4" fill="currentColor"/></svg>',
+  lock: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>',
+};
+let S = null, wireCount = 0, wireBytes = 0, leaks = 0, lastWire = 0;
+
+const STAGES = [
+  { key: "proposed", t: "Proposed", s: "transaction built" },
+  { key: "ecdh", t: "ECDH approved", s: "each device, + DLEQ proof" },
+  { key: "derive", t: "Output derived", s: "both get the same tx" },
+  { key: "sign", t: "Signed", s: "each device approves" },
+  { key: "done", t: "Signed tx", s: "ready to broadcast" },
+];
+function stageIndex(st) {
+  return { ecdh: 1, gate: 2, deriving: 2, signing: 3, combining: 4, complete: 5, cancelled: -1 }[st] ?? 0;
+}
+
+function renderChips() {
+  const relays = S.relays.map((r) => r.replace(/^wss?:\/\//, "").replace(/\/$/, "")).join(", ");
+  $("chips").innerHTML = [
+    `<span class="chip"><span class="dot live"></span><b>Signet</b></span>`,
+    `<span class="chip">${S.threshold}-of-${S.members.length} FROST</span>`,
+    `<span class="chip"><span class="dot ${S.group ? "ok" : ""}"></span>group <b class="mono">${S.group ? short(S.group, 8, 4) : "not joined"}</b></span>`,
+    `<span class="chip"><span class="dot ${S.deviceReady ? "ok" : "bad"}"></span>device ${S.deviceReady ? "<b>ready</b>" : "<b>not connected</b>"}</span>`,
+    `<span class="chip" title="${esc(S.relays.join(" "))}">relays <b>${esc(relays)}</b></span>`,
+  ].join("");
+}
+
+function renderPayment() {
+  const s = S.session;
+  if (!s) {
+    $("payment").innerHTML = `<div class="idle">${ICON.lock}<span>Waiting for a proposal from the coordinator…</span></div>`;
+    return;
+  }
+  const r = s.recipients[0] || {};
+  const more = s.recipients.length > 1 ? ` <span style="color:var(--muted)">+${s.recipients.length - 1} more</span>` : "";
+  const total = s.recipients.reduce((a, x) => a + x.amount_sat, 0);
+  const addr = esc(r.address || "");
+  const m = addr.match(/^(t?sp1)(.*)$/);
+  $("payment").innerHTML = `<div class="payment">
+    <div class="amount">${sat(total)}<small>sat</small></div>
+    <div class="to"><div class="label">to silent-payment address</div>
+      <div class="addr">${m ? `<span class="sp">${m[1]}</span>${m[2]}` : addr}${more}</div></div>
+    <div class="meta">fee <b>${s.feeSat != null ? sat(s.feeSat) + " sat" : "—"}</b><br>
+      ${s.inputs.length} input${s.inputs.length === 1 ? "" : "s"}${s.change ? ` · change <b>${sat(s.change.amount_sat)}</b>` : ""}<br>
+      session <span class="mono">${esc(s.id.slice(0, 8))}</span></div>
+  </div>`;
+}
+
+function renderSteps() {
+  const s = S.session;
+  const at = s ? stageIndex(s.stage) : -2;
+  $("steps").innerHTML = STAGES.map((st, i) => {
+    let cls = "";
+    if (s?.stage === "cancelled") cls = i === 0 ? "done" : "";
+    else if (at > i) cls = "done";
+    else if (at === i) cls = "active";
+    if (s?.stage === "complete" && i === 4) cls = "done";
+    return `<div class="step ${cls}"><div class="node">${cls === "done" ? ICON.check.replace('viewBox', 'width="14" height="14" viewBox') : i + 1}</div>
+      <div class="t">${st.t}</div><div class="s">${st.s}</div></div>`;
+  }).join("");
+}
+
+function row(state, label, sub, val) {
+  const cls = state === "done" ? "done" : state === "approve" ? "approve" : "";
+  const st = state === "done" ? ICON.check : state === "approve" ? `<span style="color:var(--wait)">${ICON.wait}</span>` : "";
+  return `<div class="row ${cls}"><div class="st">${st}</div><div class="lab">${label}<small>${sub}</small></div><div class="val">${val || ""}</div></div>`;
+}
+
+function renderDevices() {
+  const s = S.session;
+  $("devices").innerHTML = S.members.map((m) => {
+    const p = s?.per?.[m.shareIndex] || { ecdh: "idle", sign: "idle", derived: null };
+    const letter = String.fromCharCode(64 + m.shareIndex);
+    const ecdhVal = p.ecdh === "done" ? "proof ✓" : p.ecdh === "approve" ? "Approve on device" : "";
+    const derVal = p.derived ? short(p.derived, 8, 0) : (s && s.subset && s.subset.includes(m.shareIndex) && s.stage !== "cancelled" ? "verifying…" : "");
+    const derState = p.derived ? "done" : derVal ? "approve" : "idle";
+    const signVal = p.sign === "done" ? "share sent" : p.sign === "approve" ? (p.derived ? "Approve on device" : "") : "";
+    return `<div class="card device">
+      <header><div class="ico">${ICON.chip}</div>
+        <div><div class="name">Signer ${letter}</div><div class="sub">share ${m.shareIndex} · ${short(m.pubkey, 6, 4)}</div></div>
+        ${m.me ? '<span class="tag">THIS MAC</span>' : m.coordinator ? '<span class="tag" style="background:rgba(149,154,163,.14);color:var(--muted)">COORDINATOR</span>' : ""}
+      </header>
+      <div class="rows">
+        ${row(p.ecdh, "ECDH share", "x·B_scan + BIP374 DLEQ proof", ecdhVal)}
+        ${row(derState, "Payment output derived", "proofs verified, SP script computed", derVal)}
+        ${row(p.sign === "approve" && !p.derived ? "idle" : p.sign, "FROST signature share", "after checking output on device", signVal)}
+      </div></div>`;
+  }).join("");
+}
+
+function renderBanner() {
+  const s = S.session;
+  let h = "";
+  if (s?.cancelled) h = `<div class="banner bad">✗ Session cancelled — ${esc(s.cancelled)}</div>`;
+  else if (s?.derivedMatch === true) {
+    const hash = Object.values(s.per).find((p) => p.derived)?.derived;
+    h = `<div class="banner ok">✓ Both devices independently derived the identical transaction<span class="mono">${short(hash, 12, 0)}</span></div>`;
+  } else if (s?.derivedMatch === false) h = `<div class="banner bad">✗ Devices derived DIFFERENT transactions — signature shares withheld</div>`;
+  else if (s?.stage === "gate") h = `<div class="banner wait">✓ Both devices approved ECDH and sent their DLEQ proofs — ${S.isCoordinator ? "press <b>Request signatures</b> to continue" : "waiting for the coordinator to request signatures"}</div>`;
+  $("banner").innerHTML = h;
+}
+
+function renderTx() {
+  const c = S.session?.complete;
+  if (!c) { $("tx").innerHTML = ""; return; }
+  const link = `https://mempool.space/signet/tx/${c.txid}`;
+  $("tx").innerHTML = `<div class="card tx"><div style="min-width:0"><div class="k">Signed transaction · looks like a single-key taproot spend</div>
+    <div class="v">${esc(c.txid)}</div></div>
+    <div class="btns"><button class="btn primary" id="bcast">Broadcast to Signet</button>
+    <a class="btn" href="${link}" target="_blank" rel="noopener">mempool.space ↗</a></div></div>`;
+  $("bcast").onclick = async (e) => {
+    e.target.disabled = true; e.target.textContent = "Broadcasting…";
+    const r = await api("broadcast");
+    e.target.textContent = r.ok ? "Broadcast ✓" : "Failed — see log";
+    if (!r.ok) e.target.disabled = false;
+  };
+}
+
+function renderControls() {
+  const el = $("controls");
+  if (!S.isCoordinator) { el.hidden = true; return; }
+  el.hidden = false;
+  if (!el.dataset.built) {
+    el.dataset.built = "1";
+    el.innerHTML = `<input id="pfile" value="proposal.json" spellcheck="false" aria-label="proposal file">
+      <button class="btn primary" id="bProp">Propose</button>
+      <button class="btn" id="bSign">Request signatures</button>
+      <button class="btn" id="bCancel">Cancel</button><span class="err" id="cerr"></span>`;
+    $("bProp").onclick = () => act("propose", { file: $("pfile").value });
+    $("bSign").onclick = () => act("sign");
+    $("bCancel").onclick = () => act("cancel");
+  }
+  $("bProp").disabled = !S.canPropose;
+  $("bSign").disabled = !S.canSign;
+  $("bSign").className = "btn" + (S.canSign ? " primary" : "");
+  $("bProp").className = "btn" + (S.canPropose ? " primary" : "");
+  $("bCancel").disabled = !S.session || !!S.session.complete || !!S.session.cancelled;
+}
+
+async function api(name, body = {}) {
+  try {
+    const r = await fetch(`/api/${name}`, { method: "POST", headers: { "x-vault": "1", "content-type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json();
+    return r.ok ? { ok: true, ...j } : { ok: false, error: j.error };
+  } catch (e) { return { ok: false, error: String(e) }; }
+}
+async function act(name, body) {
+  $("cerr").textContent = "";
+  const r = await api(name, body);
+  if (!r.ok) $("cerr").textContent = r.error;
+}
+
+function render() {
+  if (!S) return;
+  renderChips(); renderPayment(); renderSteps(); renderDevices(); renderBanner(); renderTx(); renderControls();
+}
+
+const KIND = { 445: "group message", 1059: "gift-wrapped invite", 30443: "key package", 10051: "key package relays" };
+function addWire(w) {
+  wireCount++; wireBytes += w.bytes; if (w.plaintext) leaks++;
+  $("nEv").textContent = wireCount;
+  $("nKb").textContent = (wireBytes / 1024).toFixed(1);
+  $("nLeak").textContent = leaks;
+  $("leakBox").className = "stat " + (leaks ? "leak" : "good");
+  const el = document.createElement("div");
+  el.className = "ev" + (w.plaintext ? " leak" : "");
+  el.innerHTML = `<div class="top"><span class="dir">${w.dir === "out" ? "↑" : "↓"}</span>
+    <span class="kind k${w.kind}">${esc(KIND[w.kind] || "kind " + w.kind)}</span>
+    <span class="who" title="author pubkey">${short(w.pubkey, 6, 4)}</span>
+    <span class="sz">${w.bytes.toLocaleString()} B</span></div>
+    <div class="blob">${esc(w.snippet)}</div>`;
+  const feed = $("feed");
+  feed.prepend(el);
+  while (feed.children.length > 60) feed.lastChild.remove();
+}
+
+function addLog(l) {
+  if (!l) return;
+  const t = new Date(l.at).toTimeString().slice(0, 8);
+  $("last").textContent = `${t}  ${l.text}`;
+  const box = $("log");
+  box.textContent += `${t}  ${l.text}\n`;
+  if (box.textContent.length > 60000) box.textContent = box.textContent.slice(-40000);
+  box.scrollTop = box.scrollHeight;
+}
+$("foot").onclick = () => document.body.classList.toggle("showlog");
+
+function connect() {
+  const es = new EventSource("/events");
+  es.addEventListener("snapshot", (e) => { S = JSON.parse(e.data); render(); });
+  es.addEventListener("wire", (e) => addWire(JSON.parse(e.data)));
+  es.addEventListener("log", (e) => addLog(JSON.parse(e.data)));
+  es.addEventListener("hello", () => { $("feed").innerHTML = ""; wireCount = wireBytes = leaks = 0; $("log").textContent = ""; });
+  es.onerror = () => { $("last").textContent = "dashboard disconnected — is `vault run` still running?"; };
+}
+connect();
+</script>
+</body>
+</html>

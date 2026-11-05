@@ -14,6 +14,7 @@ const share = Number(arg("share", process.env.MOCK_SHARE ?? "1"));
 const rejectSign = process.argv.includes("--reject-sign");
 const tamperTask = process.argv.includes("--tamper-task");
 const offline = process.argv.includes("--offline");
+const delay = Number(process.env.MOCK_APPROVE_MS ?? 100); // simulated time to approve on the device
 const hex = (s: string) => Buffer.from(s).toString("hex");
 const out = (o: unknown) => process.stdout.write(JSON.stringify(o) + "\n");
 
@@ -47,7 +48,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         }
         for (const x of sessions.values()) if (!x.cancelled && !x.signReady) throw new Error("another session is active");
         sessions.set(c.session_id, { task: c.task });
-        setTimeout(() => { sessions.get(c.session_id)!.ecdhReady = true; out({ event: "ecdh_ready", device_id: device }); }, 100);
+        setTimeout(() => { sessions.get(c.session_id)!.ecdhReady = true; out({ event: "ecdh_ready", device_id: device }); }, delay);
         return ok({ status: "confirm_ecdh_on_device" });
       }
       case "offer": {
@@ -63,7 +64,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         if (!c.offers.some((o: any) => o.ecdh === s.offer.ecdh && o.binonces === s.offer.binonces)) throw new Error("own offer missing");
         if (rejectSign) throw new Error("user rejected on device");
         const completed = createHash("sha256").update(s.task + c.offers.map((o: any) => o.ecdh).sort().join() + (tamperTask ? "x" : "")).digest("hex");
-        setTimeout(() => { s.signReady = true; out({ event: "signature_ready", device_id: device }); }, 100);
+        setTimeout(() => { s.signReady = true; out({ event: "signature_ready", device_id: device }); }, delay);
         return ok({ status: "confirm_transaction_on_device", completed_task: completed });
       }
       case "shares": {
