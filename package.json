@@ -6,12 +6,16 @@
     "@scure/base": "^2.4.0",
     "@scure/btc-signer": "^2.4.1",
     "applesauce-core": "^7.0.3",
+    "applesauce-relay": "^7.0.0",
     "applesauce-signers": "^7.0.1",
     "eventemitter3": "^5.0.4",
     "nostr-tools": "^2.25.5"
   },
   "name": "marmot-vault",
   "scripts": {
-    "demo": "bun run src/demo.ts"
+    "demo": "bun run src/demo.ts",
+    "vault": "bun run src/cli.ts",
+    "relay": "bun run scripts/local-relay.ts",
+    "test": "bun test"
   }
 }

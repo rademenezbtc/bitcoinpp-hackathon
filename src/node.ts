@@ -1,8 +1,9 @@
-// A Marmot participant (coordinator or FROST device) wrapping marmot-ts.
-// Handles key packages, invites, joining, and sending/receiving ceremony messages.
+// A Marmot participant (coordinator or signer) wrapping marmot-ts.
+// Handles key packages, invites, joining, and sending/receiving app rumors.
 import { EventEmitter } from "eventemitter3";
 import { PrivateKeySigner } from "applesauce-signers";
 import { bytesToHex } from "@noble/hashes/utils.js";
+import { getEventHash } from "nostr-tools/pure";
 import {
   MarmotClient,
   createApplicationMessageIntent,
@@ -13,24 +14,57 @@ import { InMemoryKeyValueStore } from "@internet-privacy/marmot-ts/extra";
 import { CEREMONY_KIND, decode, encode, type CeremonyMsg } from "./schema.ts";
 
 export interface Inbound {
-  from: string; // sender nostr pubkey (authenticated by MLS)
+  from: string; // sender nostr pubkey (MLS-authenticated)
   msg: CeremonyMsg;
 }
+export interface InboundRumor {
+  from: string; // MLS-authenticated sender pubkey
+  kind: number;
+  content: string;
+  id: string;
+  local: boolean; // true when it's our own message, dispatched in-process
+}
 
-export class VaultNode extends EventEmitter<{ message: [Inbound]; joined: [string] }> {
+export interface NodeOptions {
+  /** Persisted Nostr secret key; random if omitted. */
+  secretKey?: Uint8Array;
+  /** Stable key-package slot (64 hex chars); random if omitted. */
+  clientId?: string;
+  /** Group-state store; in-memory if omitted. */
+  groupStateStore?: any;
+  /** Only join groups whose Welcome was sent by one of these pubkeys. Empty/undefined = accept any. */
+  acceptInvitesFrom?: string[];
+  log?: (s: string) => void;
+}
+
+export class VaultNode extends EventEmitter<{ message: [Inbound]; rumor: [InboundRumor]; joined: [string] }> {
   client!: MarmotClient;
   signer: PrivateKeySigner;
   pubkey!: string;
   groupId?: string;
   private watching = new Set<string>();
+  private log: (s: string) => void;
+  /**
+   * One queue for every MLS state change (sends, ingests, invites). marmot-ts
+   * 0.9 loses messages ("Desired gen in the past") when a send overlaps an
+   * ingest on the same group, so nothing here runs concurrently.
+   */
+  private queue: Promise<unknown> = Promise.resolve();
+  private exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(fn, fn);
+    this.queue = run.catch(() => {});
+    return run;
+  }
 
   constructor(
     public name: string,
     private network: NostrNetworkInterface,
     public relays: string[],
+    private opts: NodeOptions = {},
   ) {
     super();
-    this.signer = new PrivateKeySigner();
+    this.signer = new PrivateKeySigner(opts.secretKey);
+    this.log = opts.log ?? ((s) => console.log(`[${name}] ${s}`));
   }
 
   async start() {
@@ -38,10 +72,16 @@ export class VaultNode extends EventEmitter<{ message: [Inbound]; joined: [strin
     this.client = new MarmotClient({
       signer: this.signer,
       network: this.network,
-      groupStateStore: new InMemoryKeyValueStore(),
+      groupStateStore: this.opts.groupStateStore ?? new InMemoryKeyValueStore(),
       keyPackageStore: new InMemoryKeyValueStore(),
-      clientId: bytesToHex(crypto.getRandomValues(new Uint8Array(32))),
+      clientId: this.opts.clientId ?? bytesToHex(crypto.getRandomValues(new Uint8Array(32))),
     });
+    // Rejoin groups persisted from an earlier run.
+    for (const g of await this.client.groups.loadAll()) {
+      this.groupId = bytesToHex(g.id);
+      this.watchGroup(g);
+      this.log(`resumed group ${this.groupId.slice(0, 12)}…`);
+    }
     await this.client.keyPackages.create({ relays: this.relays });
     this.listenForInvites();
     return this;
@@ -59,47 +99,59 @@ export class VaultNode extends EventEmitter<{ message: [Inbound]; joined: [strin
     return this.groupId;
   }
 
-  /** Coordinator: invite a device by its nostr pubkey (looks up its key package). */
+  /** Coordinator: invite a member by nostr pubkey (looks up its key package). */
   async invite(pubkey: string) {
-    const [kp] = await this.client.network.request(this.relays, [
-      { kinds: [30443], authors: [pubkey], limit: 1 },
-    ]);
-    if (!kp) throw new Error(`no key package for ${pubkey.slice(0, 8)}`);
-    await this.client.groups.invite(this.groupId!, kp);
+    const kps = await this.client.network.request(this.relays, [{ kinds: [30443], authors: [pubkey] }]);
+    const kp = kps.sort((a, b) => b.created_at - a.created_at)[0];
+    if (!kp) throw new Error(`no key package on relays for ${pubkey.slice(0, 8)}… — is its app running?`);
+    await this.exclusive(() => this.client.groups.invite(this.groupId!, kp));
   }
 
-  async send(msg: CeremonyMsg) {
-    if (!this.groupId) throw new Error(`${this.name} is not in a group`);
-    const rumor = await this.makeRumor(encode(msg));
-    await this.client.groups.send(this.groupId, createApplicationMessageIntent(rumor));
-  }
-
-  private async makeRumor(content: string) {
-    const { getEventHash } = await import("nostr-tools/pure");
-    const r: any = {
-      kind: CEREMONY_KIND,
-      pubkey: this.pubkey,
-      created_at: Math.floor(Date.now() / 1000),
-      tags: [],
-      content,
-    };
+  /** Send an app rumor of any kind to the group; also delivered to our own handlers. */
+  async sendRumor(kind: number, content: string) {
+    if (!this.groupId) throw new Error(`${this.name} is not in a group yet`);
+    const r: any = { kind, pubkey: this.pubkey, created_at: Math.floor(Date.now() / 1000), tags: [], content };
     r.id = getEventHash(r);
-    return r;
+    const gid = this.groupId;
+    await this.exclusive(() => this.client.groups.send(gid, createApplicationMessageIntent(r)));
+    queueMicrotask(() => this.dispatch({ from: this.pubkey, kind, content, id: r.id, local: true }));
+  }
+
+  /** Legacy ceremony messages (schema v2 demo). */
+  async send(msg: CeremonyMsg) {
+    await this.sendRumor(CEREMONY_KIND, encode(msg));
+  }
+
+  private dispatch(r: InboundRumor) {
+    this.emit("rumor", r);
+    if (r.kind === CEREMONY_KIND && !r.local) {
+      const msg = decode(r.content);
+      if (msg) this.emit("message", { from: r.from, msg });
+    }
   }
 
   private listenForInvites() {
+    const allow = this.opts.acceptInvitesFrom?.filter(Boolean) ?? [];
     this.client.network
       .subscription(this.relays, [{ kinds: [1059], "#p": [this.pubkey] }])
       .subscribe({
         next: async (ev) => {
-          await this.client.invites.ingestEvent(ev);
-          await this.client.invites.decryptGiftWraps();
-          for (const welcomeRumor of await this.client.invites.getUnread()) {
-            const { group } = await this.client.joinGroupFromWelcome({ welcomeRumor });
-            await this.client.invites.markAsRead(welcomeRumor.id);
-            this.groupId = bytesToHex(group.id);
-            this.watchGroup(group);
-            this.emit("joined", this.groupId);
+          try {
+            await this.client.invites.ingestEvent(ev);
+            await this.client.invites.decryptGiftWraps();
+            for (const welcomeRumor of await this.client.invites.getUnread()) {
+              await this.client.invites.markAsRead(welcomeRumor.id);
+              if (allow.length && !allow.includes(welcomeRumor.pubkey)) {
+                this.log(`ignored invite from unknown ${welcomeRumor.pubkey.slice(0, 8)}…`);
+                continue;
+              }
+              const { group } = await this.client.joinGroupFromWelcome({ welcomeRumor });
+              this.groupId = bytesToHex(group.id);
+              this.watchGroup(group);
+              this.emit("joined", this.groupId);
+            }
+          } catch (e: any) {
+            this.log(`invite handling failed: ${e?.message ?? e}`);
           }
         },
       });
@@ -112,22 +164,24 @@ export class VaultNode extends EventEmitter<{ message: [Inbound]; joined: [strin
 
     group.on("applicationMessage", (data: Uint8Array) => {
       const rumor = deserializeApplicationData(data);
-      if (rumor.kind !== CEREMONY_KIND) return;
-      const msg = decode(rumor.content);
-      if (msg) this.emit("message", { from: rumor.pubkey, msg });
+      if (rumor.pubkey === this.pubkey) return; // own messages are dispatched locally
+      this.dispatch({ from: rumor.pubkey, kind: rumor.kind, content: rumor.content, id: rumor.id, local: false });
     });
 
-    // Feed kind 445 group events into MLS. Serialize ingestion per group.
-    let chain = Promise.resolve();
+    // Feed kind 445 group events into MLS through the same queue as sends.
+    const seen = new Set<string>();
     this.client.network
       .subscription(group.relays, [{ kinds: [445], "#h": [bytesToHex(group.groupData.nostrGroupId)] }])
       .subscribe({
         next: (event) => {
-          chain = chain.then(async () => {
+          if (seen.has(event.id)) return;
+          seen.add(event.id);
+          this.exclusive(async () => {
             for await (const r of group.ingest([event])) {
-              if (r.kind === "unreadable") console.warn(`[${this.name}] unreadable event`);
+              if (r.kind === "unreadable")
+                this.log(`unreadable group event: ${(r as any).errors?.map((e: any) => e?.message ?? String(e)).join("; ")}`);
             }
-          }).catch((e) => console.error(`[${this.name}] ingest error`, e));
+          }).catch((e) => this.log(`ingest error: ${e?.message ?? e}`));
         },
       });
   }

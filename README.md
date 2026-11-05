@@ -9,10 +9,121 @@ The silent-payment flow follows [Frostsnap PR #640](https://github.com/frostsnap
 
 The physical-device implementation is in [the local Frostsnap bridge handoff](frostsnap/README.md).
 It includes the Rust bridge, firmware updater, process adapter and hardware test
-results. Wiring its opaque payloads into Marmot is still required; `demo` continues
-to use software stand-ins.
+results. `bun run vault` (below) wires its opaque payloads into Marmot; `demo`
+continues to use software stand-ins.
 
-## Run
+## Hardware run: Frostsnap SP bridge over Marmot
+
+Each Mac runs **one** `marmot-vault` process. It launches that Mac's own
+`frostsnap_sp_bridge` (own state dir, pinned SP firmware digest) and carries
+the bridge's opaque payloads through the encrypted Marmot group. Wallet
+databases and bridge state never leave the Mac. Protocol: `frostsnap-sp-bridge/1`.
+
+```
+A (coordinator + share 1)            B (share 2)
+prepare ──► fs.proposal ───────────► ecdh (device approval) ─► offer
+ecdh ─► offer ─► fs.offer ◄───────── fs.offer
+   ── 2/2 offers: MILESTONE-1 GATE (type `sign`) ──
+fs.sign_request (same offers) ─────► sign (verify proofs, derive SP output, device approval)
+sign ─► shares ─► fs.shares ◄─────── shares
+combine ─► signed tx (not broadcast) ─► fs.complete
+```
+
+### 1. Install (each Mac)
+
+```bash
+git clone git@github.com:rademenezbtc/bitcoinpp-hackathon.git && cd bitcoinpp-hackathon
+bun install && bun test
+```
+
+### 2. Initialise (each Mac; Frostsnap app closed, device plugged in)
+
+```bash
+# Signer B
+bun run vault init --name B --device <B_DEVICE_ID> \
+  --bridge ~/Downloads/Frostsnap-SP-Bridge-mac-arm64/frostsnap_sp_bridge \
+  --state ~/frostsnap-sp-bridge-state
+
+# Signer A (coordinator)
+bun run vault init --name A --role coordinator --device <A_DEVICE_ID> \
+  --bridge <path>/frostsnap_sp_bridge --state ~/frostsnap-sp-bridge-state
+```
+
+`init` creates a Marmot identity in `~/.marmot-vault/<name>/`, asks the bridge
+(offline) for the Signet wallet, pins key id + access structure, finds this
+Mac's share index from `--device`, and prints the **npub** to share.
+
+### 3. Pair (exchange npubs out of band)
+
+```bash
+# on A
+bun run vault member --name A <B_NPUB> 2
+# on B
+bun run vault member --name B <A_NPUB> 1
+bun run vault coordinator --name B <A_NPUB>
+```
+
+### 4. Run (B first, then A)
+
+```bash
+bun run vault run --name B      # waits for A's invite (accepts only A)
+bun run vault run --name A      # creates the group and invites B
+```
+
+### 5. Milestone 1 (on A)
+
+```bash
+propose proposal.json           # proposal.json: see below
+# both devices: approve ECDH  → A prints "2 hardware-approved ECDH offers collected"
+sign                            # only when ready to go further: devices verify + derive output, then approve
+```
+
+```json
+{
+  "inputs": [{ "txid": "<funding txid>", "vout": 0, "internal": false, "index": 0 }],
+  "recipients": [{ "address": "tsp1…", "amount_sat": 1000 }],
+  "change": { "index": 0, "amount_sat": 8700 }
+}
+```
+The previous transaction is fetched from mempool.space/signet when only `txid` is
+given. Inputs must be confirmed, default-account P2TR wallet UTXOs; `index` is the
+address index. The signed transaction is printed, **not broadcast**.
+
+REPL: `status`, `invite [npub]`, `propose <file>`, `sign`, `retry`, `cancel`, `quit`.
+
+### Relays
+
+Default: `relay.damus.io`, `nos.lol`, `relay.primal.net` (edit `relays` in
+`~/.marmot-vault/<name>/config.json`). If public relays misbehave on venue Wi-Fi,
+run one on A and point both configs at it (relay still sees only ciphertext):
+```bash
+bun run relay 7777              # on A → ws://<A's LAN IP>:7777 in both configs
+```
+
+### Rehearse without hardware
+
+`scripts/mock-bridge.sh` mirrors the real bridge's wire shapes (events, statuses,
+results from `frostsnap/sp_bridge/src/{main,lib}.rs`); set `MOCK_DEVICE`/`MOCK_SHARE`
+and use it as `--bridge` with `bun run relay` to run A and B locally.
+`test/app.test.ts` covers the flow, the milestone gate, sender binding, wallet
+pinning, a swapped-offer attack, mismatched derivations and a device rejection.
+`test/node.test.ts` guards against a marmot-ts 0.9 message-loss race (sends
+overlapping ingests), which `VaultNode` avoids by queueing all MLS operations.
+
+### What this app enforces (bridge README requirements)
+
+- Marmot sender (MLS-authenticated; marmot-ts rejects rumor/sender mismatch) is bound to a configured share index.
+- Wallet key id, access structure and protocol are pinned; proposals for anything else are refused.
+- Invites accepted only from the configured coordinator; joining grants no signing authority.
+- Fresh 32-byte session id per attempt, never reused; one open session per bridge; messages de-duplicated.
+- Subset frozen at the first sign request; each signer checks every offer in it equals the one that signer actually sent.
+- After `sign`, each signer publishes a hash of its bridge's `completed_task`; signature
+  shares are released only when every signer derived the identical transaction.
+- Proposals are refused if the local bridge's core revision differs from the pinned one,
+  or if the device isn't connected with the expected SP firmware.
+- Cancellation (`cancel`, device rejection, 20-min timeout) reaches every bridge.
+
+## Reference implementation (TypeScript SP math)
 
 ```bash
 bun install
@@ -50,7 +161,14 @@ count up together.
 
 | File | What |
 |---|---|
-| `src/schema.ts` | Ceremony message types — the contract with the Frostsnap bridge |
+| `src/cli.ts` | `bun run vault` — init / member / coordinator / run (one process per Mac) |
+| `src/vault-app.ts` | Bridge-backed session logic: proposal → offers → gate → sign → shares → combine |
+| `src/fs-schema.ts` | Marmot messages carrying opaque `frostsnap-sp-bridge/1` payloads |
+| `src/frostsnap-bridge.ts` | Re-export of `frostsnap/sp_bridge/client.ts` (local bridge process adapter) |
+| `src/net-pool.ts` | marmot-ts network over real relays (applesauce-relay, NIP-42 auth) |
+| `src/file-store.ts` | On-disk MLS group state so restarts resume the group |
+| `scripts/` | `local-relay.ts` (LAN relay), `mock-bridge.ts`/`.sh` (hardware stand-in) |
+| `src/schema.ts` | Reference ceremony messages (TypeScript SP math path, not used with hardware) |
 | `src/sp.ts` | BIP374 DLEQ, BIP352 input hash / outputs / addresses, share images, Lagrange |
 | `src/ceremony.ts` | Coordinator (build requests, verify + combine) and device checks |
 | `src/node.ts` | Marmot participant (marmot-ts): key packages, invite/join, send/receive |
