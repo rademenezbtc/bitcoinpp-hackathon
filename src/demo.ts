@@ -36,7 +36,7 @@ const coord = await new VaultNode("coordinator", net, RELAYS).start();
 const devices = await Promise.all(
   vault.shares.map((s) => new VaultNode(`device-${s.shareIndex}`, net, RELAYS).start()),
 );
-await coord.createGroup("Marmot Vault");
+await coord.createGroup("BlackIce");
 for (const d of devices) await coord.invite(d.pubkey);
 await until(() => devices.every((d) => d.groupId === coord.groupId));
 console.log(`group ready: coordinator + ${devices.length} devices, ${THRESHOLD}-of-${N_DEVICES}, signet`);

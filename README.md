@@ -1,20 +1,88 @@
-# Marmot Vault — signing coordinator
+# BlackIce
 
-Remote FROST signing for a Sparrow watch-only taproot wallet (physical
-Frostsnap 2-of-2 on Signet), including sends to silent-payment addresses
-(BIP 352), coordinated over an end-to-end encrypted Marmot group. No
-coordination server: relays only see MLS ciphertext.
+**Distributed FROST Silent Payments.** BlackIce lets a hardware multisig pay a silent-payment
+address, with every step coordinated over an end-to-end encrypted Marmot group and
+no server in the middle.
 
-The silent-payment flow follows [Frostsnap PR #640](https://github.com/frostsnap/frostsnap/pull/640).
+Built at bitcoin++ Seoul 2026 for *Best Use of the Marmot Protocol*.
 
-The physical-device implementation is in [the local Frostsnap bridge handoff](frostsnap/README.md).
-It includes the Rust bridge, firmware updater, process adapter and hardware test
-results. `bun run vault` (below) wires its opaque payloads into Marmot; `demo`
-continues to use software stand-ins.
+![The BlackIce dashboard after a completed signing ceremony](docs/dashboard-complete.png)
 
-## Hardware run: Frostsnap SP bridge over Marmot
+## The problem
 
-Each Mac runs **one** `marmot-vault` process. It launches that Mac's own
+Multisig is the safest way to hold bitcoin, but it gives up privacy at every step:
+
+- **It can't pay silent payments.** Sending to a silent-payment address (BIP 352)
+  needs the combined private key of every input. A multisig split across devices
+  never has that in one place, so until now only single-key wallets could pay one.
+- **Coordination leaks.** Co-signers pass transactions over Signal, email or a
+  coordinator server, which learn phone numbers, amounts, recipients and timing.
+- **The chain sees the multisig.** Script multisig reveals its policy every time it spends.
+
+## What BlackIce does
+
+| Layer | How | Result |
+|---|---|---|
+| **Recipient** | Silent payments, with each device contributing its own ECDH share and a BIP 374 DLEQ proof ([Frostsnap PR #640](https://github.com/frostsnap/frostsnap/pull/640)) | A hardware multisig can pay a static `sp1…` address; each payment lands in a fresh output nobody can link to it |
+| **Signing** | FROST threshold keys on [Frostsnap](https://frostsnap.com) devices | Any k-of-n devices produce one Schnorr signature: on-chain it's an ordinary single-key taproot spend |
+| **Coordination** | [Marmot](https://github.com/marmot-protocol/marmot): MLS group messaging over Nostr | Every ceremony message is end-to-end encrypted; relays only store ciphertext; no phone numbers, no server |
+
+## How a payment gets signed
+
+```
+Frostsnap A ─USB─ bridge A ─ BlackIce A ─┐                     ┌─ BlackIce B ─ bridge B ─USB─ Frostsnap B
+                                         └─ encrypted Marmot ──┘
+                                            group on public
+                                            Nostr relays
+```
+
+1. **Propose.** The coordinator's bridge builds the transaction. The silent-payment output can't be computed yet.
+2. **ECDH.** Each device asks its owner ("Hold to Contribute") and returns its ECDH share with a DLEQ proof that it used its real key share.
+3. **Derive.** Each signer's bridge verifies every proof and derives the payment output. Each signer publishes a hash of the transaction it derived; nobody continues unless they all match.
+4. **Sign.** Each device shows the silent-payment address, amount and fee itself; its owner approves ("Hold to Sign") and it returns a FROST signature share.
+5. **Combine.** The shares become one Schnorr signature, ready to broadcast.
+
+Private keys never leave the devices, wallet databases and bridge state never leave
+each laptop, and the laptop is never trusted with what is being paid: the device shows it.
+
+## Demo: it works on Signet
+
+Two Frostsnap devices (2-of-2) on two MacBooks, coordinated only through a Marmot
+group on `relay.damus.io`, `nos.lol` and `relay.primal.net`:
+
+- **Paid 1,000 sat to a `tsp1…` silent-payment address.** Transaction
+  [`dec10c6d…898d`](https://mempool.space/signet/tx/dec10c6da4742ec13f2419c3f1abcb0ee2d2a6c3a378128929ade0549544898d)
+  confirmed in Signet block 329,605.
+- **On-chain it's a plain taproot spend:** one key-path input, two taproot outputs.
+  The payment landed at `tb1pvw3u…v3dsr`, which nobody can link to the `tsp1…` address.
+- **The relays learned nothing:** 12 Nostr events and 19 KB seen by signer B, none
+  containing the recipient address, the ceremony messages or the wallet IDs.
+- **Walkthrough:** [docs/ceremony.mp4](docs/ceremony.mp4) steps through the dashboard
+  from proposal to confirmation.
+
+| The device shows the silent-payment address before signing | Confirmed on Signet |
+|---|---|
+| ![Frostsnap screen: Send to silent payment #1, 0.00001000 BTC and the tsp1 address](docs/device-silent-payment.png) | ![mempool.space: transaction dec10c6d confirmed, 1,000 and 8,700 sat taproot outputs](docs/mempool-confirmed.png) |
+
+## Status and limits
+
+- **Signet only.** Development firmware from Frostsnap PR #640, which is not yet
+  reviewed; the bridge is pinned to core revision `538b0ec`.
+- An intermittent device serial-decoding crash was seen once during testing and is
+  not yet fixed upstream.
+- Not audited. Do not use with real funds.
+
+## Credits
+
+- Silent-payment ECDH for FROST: [Frostsnap PR #640](https://github.com/frostsnap/frostsnap/pull/640)
+- Marmot protocol and [marmot-ts](https://github.com/marmot-protocol/marmot-ts); [White Noise](https://whitenoise.chat)
+- The local bridge and firmware tooling: [frostsnap/README.md](frostsnap/README.md)
+
+---
+
+## Run it yourself
+
+Each Mac runs **one** `blackice` process (`bun run vault`). It launches that Mac's own
 `frostsnap_sp_bridge` (own state dir, pinned SP firmware digest) and carries
 the bridge's opaque payloads through the encrypted Marmot group. Wallet
 databases and bridge state never leave the Mac. Protocol: `frostsnap-sp-bridge/1`.
@@ -32,7 +100,7 @@ combine ─► signed tx (not broadcast) ─► fs.complete
 ### 1. Install (each Mac)
 
 ```bash
-git clone git@github.com:rademenezbtc/bitcoinpp-hackathon.git && cd bitcoinpp-hackathon
+git clone git@github.com:rademenezbtc/blackice.git && cd blackice
 bun install && bun test
 ```
 
@@ -154,7 +222,7 @@ The demo uses software stand-ins for the devices. SP math is real; FROST
 nonces and signature shares are opaque placeholders (`frost` fields), which
 the Frostsnap bridge fills in.
 
-## Ceremony (PR #640 shape)
+### Reference ceremony (TypeScript path)
 
 | # | Message | From | Contents |
 |---|---|---|---|
@@ -176,7 +244,7 @@ the Frostsnap bridge fills in.
 `k` follows transaction output order (Sparrow's), recipients sharing a scan key
 count up together.
 
-## Layout
+## Repository layout
 
 | File | What |
 |---|---|
@@ -197,18 +265,9 @@ count up together.
 | `src/fixture.ts` | Trusted-dealer 2-of-2 + vault inputs (demo/test only) |
 | `test/` | Official BIP352/374 vectors + ceremony tests |
 
-## Open points with the Frostsnap side
-
-- Account polynomial encoding and which key level the share images are (account vs root).
-- Per-input tweak contexts `(g, t)`: bridge exports them, or we port Frostsnap's derivation.
-- Output order: Sparrow fixes it; the bridge must not reshuffle recipients.
-- `outputs_fingerprint` tag/format, if devices want it in the request.
-- Returning to Sparrow: no aggregate BIP375 DLEQ in this flow, so we hand back a
-  finalized transaction (or broadcast on Signet) rather than a BIP375-complete PSBT.
-
 ## Next
 
-- [ ] `src/psbt.ts` — read Sparrow PSBTv2: inputs, derivation paths → tweak contexts, SP outputs
-- [ ] Real relays (swap `MemRelay` for a relay pool)
-- [ ] Sparrow I/O: import exported PSBT, return finalized tx
-- [ ] Guards: timeouts/abort, one session at a time
+- Import transactions from Sparrow (PSBT) instead of a JSON proposal
+- k-of-n vaults beyond 2-of-2, e.g. 2-of-3
+- Receive to the vault's own silent-payment address
+- Get the Frostsnap PR #640 firmware reviewed and the intermittent device crash fixed upstream

@@ -102,7 +102,7 @@ export class VaultNode extends EventEmitter<{ message: [Inbound]; rumor: [Inboun
   /** Coordinator: create the vault group. */
   async createGroup(name: string) {
     const group = await this.client.groups.create(name, {
-      description: "Marmot Vault signing group",
+      description: "BlackIce signing group",
       relays: this.relays,
       adminPubkeys: [this.pubkey],
     });

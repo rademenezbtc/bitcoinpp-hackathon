@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// marmot-vault CLI — one process per Mac.
+// BlackIce CLI — one process per Mac.
 //
 //   bun run vault init  --name B --bridge <path/to/frostsnap_sp_bridge> [--role coordinator]
 //   bun run vault member --name B <npub|hex> <shareIndex>      (repeat for every signer)
@@ -202,7 +202,7 @@ async function run() {
   }
 
   if (cfg.role === "coordinator" && !node.groupId) {
-    await node.createGroup(`Marmot Vault ${cfg.pin.keyId.slice(0, 8)}`);
+    await node.createGroup(`BlackIce ${cfg.pin.keyId.slice(0, 8)}`);
     log(`created vault group ${node.groupId!.slice(0, 12)}…`);
     // Invite everyone; keep retrying anyone whose key package isn't on the relays yet.
     let pending = await inviteAll(node, cfg, id.pubkey, log);

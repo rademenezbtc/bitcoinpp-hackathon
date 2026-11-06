@@ -11,7 +11,7 @@
     "eventemitter3": "^5.0.4",
     "nostr-tools": "^2.25.5"
   },
-  "name": "marmot-vault",
+  "name": "blackice",
   "scripts": {
     "demo": "bun run src/demo.ts",
     "vault": "bun run src/cli.ts",
