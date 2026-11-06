@@ -29,7 +29,7 @@ arbitrary current PR build with the pinned bridge.
 Each Mac must import its OWN restored app database. Never exchange app databases
 or initialized bridge-state directories. Private signing shares stay on devices.
 
-## Connection to Marmot: remaining integration
+## Connection to Marmot
 
 ```text
 device A --USB-- bridge A --JSONL-- app A
@@ -55,13 +55,12 @@ bridge.on("notification", event => console.log(event));
 const wallets = await bridge.request({ method: "wallets" });
 ```
 
-This commit does **not** connect the existing demo to hardware or implement real
-relays/invitation persistence. The current `schema.ts` v2 uses decoded ECDH shares
-and PSBT tasks; it is not directly interchangeable with the bridge API. Do not
-cast the opaque payloads into those fields or call the demo placeholder signing
-functions with physical devices.
+`bun run vault` connects the physical bridges through Marmot with relay and
+invitation persistence. See the root README for the two-Mac workflow. The separate
+software demo uses `schema.ts` v2 with decoded ECDH shares and PSBT tasks; those
+are not interchangeable with the bridge API.
 
-The coordinator integration must carry these exact bridge payloads:
+The coordinator integration carries these bridge payloads:
 
 | Stage | Bridge operation | Marmot payload |
 | --- | --- | --- |
@@ -92,5 +91,7 @@ throughout the ceremony.
 - First hardware run showed a serial-decoding panic at `esp32_run.rs:440`
   (`ReceiveSerial` variant 33, allowed 0..12). A staged repeat stayed normal through
   ECDH, cancellation and USB close. The intermittent crash is **not fixed**.
-- Signer B has not yet been physically validated by this bridge. No transaction
-  has been signed or broadcast with the two physical devices. Signet development only.
+- Both physical devices completed the 2-of-2 ceremony over Marmot on two Macs.
+  Both derived the same completed task; the signed transaction confirmed on Signet
+  and BlindBit detected the 1,000-sat output. See [hardware result](hardware-test.md).
+  Signet development only.

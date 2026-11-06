@@ -345,7 +345,7 @@ export class VaultApp {
     if (this.coord && !this.coord.completed) throw new Error(`session ${short(this.coord.id)} still open — \`cancel\` first`);
     if (args.recipients.length !== 1) this.log("note: milestone 1 targets exactly one SP recipient");
     const prep = await this.bridge.request<{ task: string; fee_sat?: number }>({
-      method: "prepare", key_id: this.cfg.pin.keyId, inputs: args.inputs, recipients: args.recipients, ...(args.change ? { change: args.change } : {}),
+      method: "prepare", key_id: this.cfg.pin.keyId, inputs: args.inputs.map(({ transaction, vout, internal, index }) => ({ transaction, vout, internal, index })), recipients: args.recipients, ...(args.change ? { change: args.change } : {}),
     }, 60_000);
     if (typeof prep?.task !== "string") throw new Error(`unexpected prepare result ${JSON.stringify(prep)}`);
     const id = newSessionId();

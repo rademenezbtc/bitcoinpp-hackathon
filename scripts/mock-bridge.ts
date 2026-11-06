@@ -36,6 +36,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           participants: [{ device_id: "devA", share_index: 1, account_verifying_share: "02aa" }, { device_id: "devB", share_index: 2, account_verifying_share: "02bb" }] }] }]);
       case "prepare":
         if (c.key_id !== "key-mock") throw new Error("unknown wallet");
+        for (const input of c.inputs ?? []) {
+          for (const key of Object.keys(input)) {
+            if (!["transaction", "vout", "internal", "index"].includes(key)) throw new Error(`unknown input field ${key}`);
+          }
+        }
         if (!c.recipients?.length) throw new Error("need 1..100 recipients");
         return ok({ task: hex(JSON.stringify({ i: c.inputs.length, r: c.recipients })), fee_sat: 153 });
       case "ecdh": {

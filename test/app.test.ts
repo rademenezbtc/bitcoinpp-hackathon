@@ -63,6 +63,7 @@ describe("bridge-backed ceremony A+B", () => {
     await new Promise((r) => setTimeout(r, 300));
     expect(A.signer!.proposal.task).toBe(B.signer!.proposal.task); // identical proposal
     expect(B.signer!.id).toBe(id);
+    expect(B.signer!.proposal.summary.inputs[0].txid).toBe(proposal.inputs[0].txid);
     expect(A.coord!.subset).toBeUndefined(); // gate held
     expect(B.signer!.signing).toBeFalsy();
     expect(logs.some((l) => l.includes("MILESTONE 1 GATE"))).toBe(true);
