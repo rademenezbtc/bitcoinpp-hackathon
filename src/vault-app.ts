@@ -343,7 +343,8 @@ export class VaultApp {
   async propose(args: { inputs: any[]; recipients: { address: string; amount_sat: number }[]; change?: { index: number; amount_sat: number } }) {
     if (!this.isCoordinator) throw new Error("only the coordinator proposes");
     if (this.coord && !this.coord.completed) throw new Error(`session ${short(this.coord.id)} still open — \`cancel\` first`);
-    if (args.recipients.length !== 1) this.log("note: milestone 1 targets exactly one SP recipient");
+    // Snapshot before the asynchronous prepare call: edits require a new ceremony.
+    args = structuredClone(args);
     const prep = await this.bridge.request<{ task: string; fee_sat?: number }>({
       method: "prepare", key_id: this.cfg.pin.keyId, inputs: args.inputs.map(({ transaction, vout, internal, index }) => ({ transaction, vout, internal, index })), recipients: args.recipients, ...(args.change ? { change: args.change } : {}),
     }, 60_000);

@@ -81,6 +81,22 @@ describe("bridge-backed ceremony A+B", () => {
     expect(new Set([...A.signer!.derived.values(), ...B.signer!.derived.values()]).size).toBe(1);
   }, 30000);
 
+  test("two inputs and two recipients survive the complete ceremony in order", async () => {
+    const { A, B } = await setup({ gate: true });
+    const batch = structuredClone(proposal);
+    batch.inputs.push({ ...batch.inputs[0], txid: "22".repeat(32), vout: 1, index: 1 });
+    batch.recipients.push({ address: "tsp1qsecond", amount_sat: 2000 });
+    await A.propose(batch);
+    await until(() => A.coord!.offers.size === 2);
+    expect(B.signer!.proposal.summary.recipients).toEqual(batch.recipients);
+    expect(B.signer!.proposal.summary.inputs).toEqual(batch.inputs.map(({ txid, vout }) => ({ txid, vout })));
+    batch.recipients[0].amount_sat = 999;
+    expect(A.signer!.proposal.summary.recipients[0].amount_sat).toBe(1000);
+    await A.requestSignatures();
+    await until(() => !!A.coord!.completed && !!B.signer!.done);
+    expect(A.snapshot().session!.derivedMatch).toBe(true);
+  }, 30000);
+
   test("B refuses a sign request whose offer for A was swapped", async () => {
     const { A, B, logs } = await setup({ gate: true });
     await A.propose(proposal);

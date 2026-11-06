@@ -260,19 +260,15 @@ function renderPayment() {
     $("payment").innerHTML = `<div class="idle">${ICON.lock}<span>Waiting for a proposal from the coordinator…</span></div>`;
     return;
   }
-  const r = s.recipients[0] || {};
-  const more = s.recipients.length > 1 ? ` <span style="color:var(--muted)">+${s.recipients.length - 1} more</span>` : "";
   const total = s.recipients.reduce((a, x) => a + x.amount_sat, 0);
-  const addr = esc(r.address || "");
-  const m = addr.match(/^(t?sp1)(.*)$/);
   $("payment").innerHTML = `<div class="payment">
-    <div class="amount">${sat(total)}<small>sat</small></div>
-    <div class="to"><div class="label">to silent-payment address</div>
-      <div class="addr">${m ? `<span class="sp">${m[1]}</span>${m[2]}` : addr}${more}</div></div>
+    <div class="amount">${sat(total)}<small>sat total</small></div>
+    <div class="to"><div class="label">${s.recipients.length} silent-payment recipient${s.recipients.length === 1 ? "" : "s"}</div>
+      ${s.recipients.map((r, i) => `<div style="margin-bottom:12px"><b>${i + 1}. ${sat(r.amount_sat)} sat</b><div class="addr">${esc(r.address)}</div></div>`).join("")}</div>
     <div class="meta">fee <b>${s.feeSat != null ? sat(s.feeSat) + " sat" : "—"}</b><br>
-      ${s.inputs.length} input${s.inputs.length === 1 ? "" : "s"}${s.change ? ` · change <b>${sat(s.change.amount_sat)}</b>` : ""}<br>
+      ${s.inputs.length} input${s.inputs.length === 1 ? "" : "s"}${s.change ? ` · change <b>${sat(s.change.amount_sat)} sat</b>` : ""}<br>
       session <span class="mono">${esc(s.id.slice(0, 8))}</span></div>
-  </div>`;
+  </div><details><summary>Review input outpoints</summary>${s.inputs.map((i) => `<div class="addr">${esc(i.txid)}:${Number(i.vout)}</div>`).join("")}</details>`;
 }
 
 function renderSteps() {
@@ -335,8 +331,15 @@ function renderTx() {
   const link = `https://mempool.space/signet/tx/${c.txid}`;
   $("tx").innerHTML = `<div class="card tx"><div style="min-width:0"><div class="k">Signed transaction · looks like a single-key taproot spend</div>
     <div class="v">${esc(c.txid)}</div></div>
-    <div class="btns"><button class="btn primary" id="bcast">Broadcast to Signet</button>
+    <div class="btns"><button class="btn" id="exportTx">Export signed transaction</button><button class="btn primary" id="bcast">Broadcast to Signet</button>
     <a class="btn" href="${link}" target="_blank" rel="noopener">mempool.space ↗</a></div></div>`;
+  $("exportTx").onclick = () => {
+    const url = URL.createObjectURL(new Blob([c.txHex + "\n"], { type: "text/plain" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = `signet-${c.txid}.hex`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
   $("bcast").onclick = async (e) => {
     e.target.disabled = true; e.target.textContent = "Broadcasting…";
     const r = await api("broadcast");

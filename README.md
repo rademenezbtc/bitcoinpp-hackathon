@@ -185,6 +185,45 @@ address index. The signed transaction is printed, **not broadcast**.
 
 REPL: `status`, `invite [npub]`, `propose <file>`, `sign`, `retry`, `cancel`, `quit`.
 
+### Two inputs, two receivers (next hardware milestone)
+
+The proposal accepts multiple inputs from the same Frostsnap wallet and an
+ordered list of silent-payment recipients. Each input needs its actual previous
+transaction (or txid for fetching), output number, and wallet derivation path.
+Use `internal: true` for change UTXOs. Coin selection is manual.
+
+```json
+{
+  "inputs": [
+    { "txid": "<first funding txid>", "vout": 0, "internal": false, "index": 0 },
+    { "txid": "<second funding txid>", "vout": 1, "internal": false, "index": 1 }
+  ],
+  "recipients": [
+    { "address": "<first tsp1 address>", "amount_sat": 1000 },
+    { "address": "<second tsp1 address>", "amount_sat": 2000 }
+  ],
+  "change": { "index": 1, "amount_sat": 6700 }
+}
+```
+
+The illustrative amounts assume inputs totaling 10,000 sats and a 300-sat fee;
+recalculate from the actual selected UTXOs. The dashboard displays every recipient
+and amount, plus expandable input outpoints. Review all outputs on each device.
+Inputs, recipients, amounts, and change are snapshotted when proposing: cancel and
+start a new ceremony to change them. Do not change inputs after SP derivation.
+
+After completion, **Export signed transaction** downloads the raw signed hex
+without broadcasting. This provides the handoff artifact for a wallet such as
+Sparrow; importing/reviewing/broadcasting it in Sparrow remains a manual acceptance
+check, not a PSBT or Sparrow coordinator integration.
+
+Automated coverage includes two input derivation paths and two distinct scan keys
+in the Rust device/core simulation, repeated-address outputs in a separate test,
+and the complete multi-recipient Marmot flow. The physical two-input/two-recipient
+run and receiver detection are still pending. For acceptance, confirm both inputs
+are unspent, prepare two independently scannable receivers, approve both devices,
+verify the exported transaction, then check both receiver wallets after confirmation.
+
 ### Relays
 
 Default: `relay.damus.io`, `nos.lol`, `relay.primal.net` (edit `relays` in

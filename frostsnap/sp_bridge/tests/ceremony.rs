@@ -29,15 +29,20 @@ fn invoke(
 
 #[test]
 fn two_of_two_signet_sp_roundtrip_rejects_tampering_and_duplicate_signers() {
-    ceremony(true);
+    ceremony(true, false);
 }
 
 #[test]
 fn two_of_two_single_receiver() {
-    ceremony(false);
+    ceremony(false, false);
 }
 
-fn ceremony(batch: bool) {
+#[test]
+fn two_inputs_two_distinct_receivers() {
+    ceremony(true, true);
+}
+
+fn ceremony(batch: bool, multiple_inputs: bool) {
     let mut rng = ChaCha20Rng::from_seed([27; 32]);
     let mut env = RemoteSigningEnv::default();
     let mut run = Run::start_after_remote_keygen(
@@ -66,15 +71,21 @@ fn ceremony(batch: bool) {
         recipient.address(Network::Signet).unwrap(),
     )];
     if batch {
+        let recipient = if multiple_inputs {
+            SilentPaymentRecipient { scan_key: public(scalar(5)), spend_key: public(scalar(6)) }
+        } else { recipient };
         recipients.push((
             30_000,
             recipient,
             recipient.address(Network::Signet).unwrap(),
         ));
     }
+    let inputs = if multiple_inputs {
+        vec![(BitcoinBip32Path::external(0), 60_000), (BitcoinBip32Path::external(1), 40_000)]
+    } else { vec![(BitcoinBip32Path::external(0), 100_000)] };
     let task = WireSignTask::BitcoinTransaction(template(
         access.master_appkey(),
-        &[(BitcoinBip32Path::external(0), 100_000)],
+        &inputs,
         &recipients,
         if batch { 49_000 } else { 79_000 },
     ));
@@ -167,8 +178,16 @@ fn ceremony(batch: bool) {
         &frostsnap_core::hex::decode(result["transaction"].as_str().unwrap()).unwrap(),
     )
     .unwrap();
-    assert_eq!(tx.input[0].witness.len(), 1);
-    assert_eq!(tx.input[0].witness[0].len(), 64);
+    assert_eq!(tx.input.len(), inputs.len());
+    for input in &tx.input {
+        assert_eq!(input.witness.len(), 1);
+        assert_eq!(input.witness[0].len(), 64);
+    }
+    assert_eq!(tx.output.len(), recipients.len() + 1);
+    for (output, recipient) in tx.output.iter().zip(&recipients) {
+        assert_eq!(output.value.to_sat(), recipient.0);
+    }
+    assert_eq!(tx.output.iter().map(|o| o.value.to_sat()).sum::<u64>(), 99_000);
     if batch {
         assert_ne!(tx.output[0].script_pubkey, tx.output[1].script_pubkey);
     }
