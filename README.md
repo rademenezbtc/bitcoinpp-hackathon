@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo/blackice-banner-on-dark.svg">
+    <img src="docs/logo/blackice-banner-on-light.svg" alt="BlackIce: Distributed FROST Silent Payments" width="640">
+  </picture>
+</p>
+
 # BlackIce
 
 **Distributed FROST Silent Payments.** BlackIce lets a hardware multisig pay a silent-payment
